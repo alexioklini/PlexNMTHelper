@@ -45,6 +45,12 @@ import org.simpleframework.transport.connect.SocketConnection;
 
 public class PlexNMTHelper implements Container {
 	private static Logger logger = null;
+	private static NetworkedMediaTank nmt = null;
+	private static PlexServer server;
+	private static GDMAnnouncer announcer = null;
+	private static Connection connection = null;
+	private static Thread announcerThread = null;
+	private static PlexNMTHelper helper = null;
 
 	public static void main( String[] args ) {
 		try {
@@ -79,13 +85,13 @@ public class PlexNMTHelper implements Container {
 			properties.load( reader );
 			reader.close();
 
-			String nmtAddress = properties.getProperty( "nmtAddress" );
+			final String nmtAddress = properties.getProperty( "nmtAddress" );
 			if ( nmtAddress == null ) {
 				logger.severe( "Missing property nmtAddress" );
 				return;
 			}
 
-			String nmtName = properties.getProperty( "nmtName" );
+			final String nmtName = properties.getProperty( "nmtName" );
 			if ( nmtName == null ) {
 				logger.severe( "Missing property nmtName" );
 				return;
@@ -96,44 +102,185 @@ public class PlexNMTHelper implements Container {
 				logger.severe( "Missing property port" );
 				return;
 			}
-			int port = Integer.parseInt( temp );
+			final int port = Integer.parseInt( temp );
 
 			temp = properties.getProperty( "replacementConfig" );
 			if ( temp == null ) {
 				logger.severe( "Missing property replacementConfig" );
 				return;
 			}
-			File replacementConfig = new File( temp );
 
-			NetworkedMediaTank nmt = new NetworkedMediaTank( nmtAddress, nmtName );
+			Thread checkThread = createKeepAliveThread( nmtAddress, nmtName, port, new File( temp ) );
 
-			GDMDiscovery discovery = new GDMDiscovery( port );
-			PlexServer server = discovery.discover();
-
-			String clientId = nmt.getMacAddress();
-
-			server.setClientId( clientId );
-			server.setClientName( nmt.getName() );
-
-			PlexNMTHelper helper = new PlexNMTHelper( nmt, port, server );
-			helper.initReplacements( replacementConfig );
-
-			GDMAnnouncer announcer = new GDMAnnouncer( nmtName, clientId, port );
-			Thread announcerThread = new Thread( announcer );
-			announcerThread.start();
-
-			@SuppressWarnings("resource")
-			Connection connection = new SocketConnection( new ContainerServer( helper ) );
-			connection.connect( new InetSocketAddress( port ) );
-
-			logger.info( "Ready" );
-
-			// connection.close();
+			checkThread.start();
 
 		} catch ( Exception ex ) {
 			ExceptionLogger.log( logger, ex );
 			System.exit( -1 );
 		}
+	}
+
+	private static Thread createKeepAliveThread( final String nmtAddress, final String nmtName, final int port, final File replacementConfig ) {
+		Thread checkThread = new Thread( new Runnable() {
+			@Override
+			public void run() {
+
+				// instantiate fixed parts
+				// which do not need to be recreated once the nmt goes down or
+				// up
+				nmt = new NetworkedMediaTank( nmtAddress, nmtName );
+				GDMDiscovery discovery = new GDMDiscovery( port );
+
+				while ( true ) {
+					try {
+
+						String clientId = connectToNMT();
+
+						connectToServer( discovery, clientId );
+
+						createHelper( port, replacementConfig );
+
+						announce( nmtName, port, clientId );
+
+						createSocketConnection( port );
+
+						logger.info( "Ready" );
+						checkNMTIsStillAlive( nmtAddress );
+
+					} catch ( Exception e ) {
+						logErrorMessage( nmtAddress, e );
+						shutdown();
+						wait5Seconds();
+					}
+				}
+			}
+
+			private void createSocketConnection( final int port ) throws IOException {
+				connection = new SocketConnection( new ContainerServer( helper ) );
+				connection.connect( new InetSocketAddress( port ) );
+			}
+
+			private void createHelper( final int port, final File replacementConfig ) throws IOException, ValidityException, ParsingException,
+					InterruptedException, ClientProtocolException {
+				helper = new PlexNMTHelper( nmt, port, server );
+				helper.initReplacements( replacementConfig );
+			}
+
+			private String connectToNMT() throws NMTException {
+				try {
+					return nmt.getMacAddress();
+				} catch ( Exception e ) {
+					throw new NMTException( e, NMTException.TYPE.NMT );
+				}
+
+			}
+
+			private void connectToServer( GDMDiscovery discovery, String clientId ) throws NMTException {
+
+				try {
+					server = discovery.discover();
+					server.setClientId( clientId );
+					server.setClientName( nmt.getName() );
+				} catch ( Exception e ) {
+					throw new NMTException( e, NMTException.TYPE.SERVER );
+				}
+
+			}
+
+			private void announce( final String nmtName, final int port, String clientId ) {
+				announcer = new GDMAnnouncer( nmtName, clientId, port );
+				announcerThread = new Thread( announcer );
+				announcerThread.start();
+			}
+
+			private void shutdown() {
+				shutdownNMTHelper();
+				shutdownAnnouncer();
+				shutdownConnection();
+			}
+
+			private void wait5Seconds() {
+				logger.info( "waiting five second for retry..." );
+				try {
+					Thread.sleep( 5000 );
+				} catch ( InterruptedException e1 ) {
+					// ignore
+				}
+			}
+
+			private void logErrorMessage( final String nmtAddress, Exception e ) {
+				if ( e instanceof NMTException ) {
+					NMTException ne = (NMTException) e;
+					if ( ne.getType() == NMTException.TYPE.NMT )
+						logger.info( "NMT at " + nmtAddress + " is not responding" );
+					else if ( ne.getType() == NMTException.TYPE.SERVER )
+						logger.info( "Plex Server ist not responding" );
+					else
+						logger.info( ne.getException().getMessage() );
+				} else
+					logger.info( e.getMessage() );
+			}
+
+			private void shutdownConnection() {
+				if ( connection != null ) {
+					logger.info( "closing connection" );
+					try {
+						connection.close();
+					} catch ( IOException e1 ) {
+						// ignore
+					}
+				}
+			}
+
+			private void shutdownAnnouncer() {
+				if ( announcer != null ) {
+					logger.info( "stopping announce" );
+					announcer.setStop( true );
+					wait1Second();
+				}
+			}
+
+			private void wait1Second() {
+				try {
+					Thread.sleep( 1000 );
+				} catch ( InterruptedException e1 ) {
+					// ignore
+				}
+			}
+
+			private void shutdownNMTHelper() {
+				if ( helper != null ) {
+					logger.info( "stopping helper" );
+					helper.nowPlayingMonitor.setStop( true );
+					wait1Second();
+				}
+			}
+
+			private int checkNMTIsStillAlive( final String nmtAddress ) throws NMTException {
+				while ( true ) {
+					wait1Minute();
+					try {
+						if ( !InetAddress.getByName( nmtAddress ).isReachable( 1000 ) ) {
+							throw new NMTException( new Exception( "NMT ist down" ), NMTException.TYPE.NMT );
+						}
+					} catch ( UnknownHostException e ) {
+						throw new NMTException( e, NMTException.TYPE.NMT );
+					} catch ( IOException e ) {
+						throw new NMTException( e, NMTException.TYPE.NMT );
+					}
+				}
+			}
+
+			private void wait1Minute() {
+				try {
+					Thread.sleep( 60000 );
+				} catch ( InterruptedException e ) {
+					// ignore
+				}
+			}
+		} );
+
+		return checkThread;
 	}
 
 	private static void copy( File source, File dest ) throws IOException {
@@ -153,10 +300,6 @@ public class PlexNMTHelper implements Container {
 	}
 
 	private int listenPort = -1;
-
-	private NetworkedMediaTank nmt;
-
-	private PlexServer server;
 
 	private Map< String, String > navigationMap = new HashMap< String, String >();
 	private Map< String, String > playbackMap = new HashMap< String, String >();

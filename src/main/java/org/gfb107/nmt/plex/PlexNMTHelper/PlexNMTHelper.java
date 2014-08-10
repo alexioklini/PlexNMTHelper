@@ -168,6 +168,8 @@ public class PlexNMTHelper implements Container {
 
 			private String connectToNMT() throws NMTException {
 				try {
+					if ( !InetAddress.getByName( nmtAddress ).isReachable( 1000 ) )
+						throw new NMTException( new Exception( "NMT not reachable" ), NMTException.TYPE.NMT );
 					return nmt.getMacAddress();
 				} catch ( Exception e ) {
 					throw new NMTException( e, NMTException.TYPE.NMT );

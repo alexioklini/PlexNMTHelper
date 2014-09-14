@@ -13,6 +13,11 @@ It can be controlled using
 
 History
 =======
+Version 1.0.8
+	Fork from original 1.0.8 version of gfb107
+	Startup waits until NMT is reachable. During lifetime of plexnmthelper a shutdown of NMT is detected and the plexnmthelper
+	stops announcing the fling target. If NMT later comes back again (e.g. through a restart) announcement is restarted again.
+	
 Version 1.0.7
 	Don't use list_user_storage_file to convert file paths that are already in NMT format
 	

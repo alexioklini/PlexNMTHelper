@@ -168,8 +168,9 @@ public class PlexNMTHelper implements Container {
 
 			private String connectToNMT() throws NMTException {
 				try {
-					if ( !InetAddress.getByName( nmtAddress ).isReachable( 1000 ) )
+					if ( !InetAddress.getByName( nmtAddress ).isReachable( 1000 ) ) {
 						throw new NMTException( new Exception( "NMT not reachable" ), NMTException.TYPE.NMT );
+					}
 					return nmt.getMacAddress();
 				} catch ( Exception e ) {
 					throw new NMTException( e, NMTException.TYPE.NMT );
@@ -228,6 +229,7 @@ public class PlexNMTHelper implements Container {
 					logger.info( "closing connection" );
 					try {
 						connection.close();
+						connection = null;
 					} catch ( IOException e1 ) {
 						// ignore
 					}
@@ -239,6 +241,7 @@ public class PlexNMTHelper implements Container {
 					logger.info( "stopping announce" );
 					announcer.setStop( true );
 					wait1Second();
+					announcer = null;
 				}
 			}
 
@@ -255,6 +258,8 @@ public class PlexNMTHelper implements Container {
 					logger.info( "stopping helper" );
 					helper.nowPlayingMonitor.setStop( true );
 					wait1Second();
+					helper.clear();
+					helper = null;
 				}
 			}
 
@@ -283,6 +288,13 @@ public class PlexNMTHelper implements Container {
 		} );
 
 		return checkThread;
+	}
+
+	protected void clear() {
+		videoCache.clear();
+		videoCache = null;
+		trackCache.clear();
+		trackCache = null;
 	}
 
 	private static void copy( File source, File dest ) throws IOException {

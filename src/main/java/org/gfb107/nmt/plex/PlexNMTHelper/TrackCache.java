@@ -23,6 +23,11 @@ public class TrackCache {
 		load();
 	}
 
+	public void clear() {
+		helper = null;
+		map.clear();
+	}
+
 	public void load() throws ClientProtocolException, ValidityException, IllegalStateException, IOException, ParsingException {
 		logger.info( "Building track cache" );
 

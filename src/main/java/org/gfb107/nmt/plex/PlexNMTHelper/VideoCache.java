@@ -28,6 +28,12 @@ public class VideoCache {
 		load();
 	}
 
+	public void clear() {
+		helper = null;
+		pathMap.clear();
+		keyMap.clear();
+	}
+
 	public void load() throws ClientProtocolException, ValidityException, IllegalStateException, IOException, ParsingException, InterruptedException {
 		logger.info( "Building video cache" );
 
